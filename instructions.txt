@@ -1,0 +1,14 @@
+
+1.
+	Capture frames live, saving the last frame to file in YUY2 format:
+		sudo ./capture -f -s out.bin
+
+
+2. (option 1)
+	Use "ffmpeg" to convert the YUY2 data to PNG format:
+		ffmpeg -f rawvideo -s 1920x1080 -pix_fmt yuyv422 -i out.bin out.png
+
+2. (option 2)
+	Convert the YUY2 data to RGB data manually. Then use "convert" to convert the RGB data to PNG format:
+		./yuy2_to_rgb out.bin out.rgb
+		convert -depth 8 -size 1920x1080 rgb:out.rgb out2.png
