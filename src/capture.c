@@ -33,14 +33,19 @@
 #include <signal.h>
 
 #include "threading.h"
+#include "yuy2_to_rgb.h"
 
-static const int FORCED_WIDTH = 1920;
-static const int FORCED_HEIGHT = 1080;
+#define FORCED_WIDTH	(1920)
+#define FORCED_HEIGHT	(1080)
+//static const int FORCED_WIDTH = 1920;
+//static const int FORCED_HEIGHT = 1080;
 static bool g_quit = false;
 static bool g_save = false;
 static int g_signal = 0;
 static unsigned long g_n_frames_captured = 0;
 static const char* filename = NULL;
+
+static uint8_t g_rgb_data[FORCED_WIDTH * FORCED_HEIGHT * 3];
 
 #define CONSTRAIN(v)	(v < 0 ? 0 : (v > 255 ? 255 : v))
 
@@ -117,32 +122,11 @@ static int xioctl(int fh, int request, void *arg)
         return r;
 }
 
-static void yuy2_to_rgb(const unsigned char* yuy2_data, unsigned char* rgb_data)
-{}
-
 static void process_image(const void *p, int size)
 {
 //	// Write to stdout?
 //	if (out_buf)
 //		fwrite(p, size, 1, stdout);
-
-	// Write to file?
-	if (g_save && filename && size)
-	{
-//		g_quit = true;
-		g_save = false;
-
-		FILE *file = fopen(filename, "wb");
-		if (!file)
-		{
-			fprintf(stderr, "Failed to open '%s'\n", filename);
-			return;
-		}
-
-		fwrite(p, 1, size, file);
-		fclose(file);
-		printf("Saved %s\n", filename);
-	}
 
 //	// Debug
 	g_n_frames_captured++;
@@ -156,8 +140,28 @@ static void process_image(const void *p, int size)
 
 //	printf("size = %u\n", size);
 
-	
-	process_frame((const uint8_t*)p, size);
+	// This is defined in threading.c	
+	//process_frame((const uint8_t*)p, size);
+
+	yuy2_to_rgb_threaded((const uint8_t*)p, g_rgb_data, FORCED_WIDTH * FORCED_HEIGHT);
+
+	// Write to file?
+	if (g_save && filename && size)
+	{
+//		g_quit = true;
+		g_save = false;
+
+		FILE *fp = fopen(filename, "wb");
+		if (!fp)
+		{
+			fprintf(stderr, "Failed to open '%s'\n", filename);
+			return;
+		}
+
+		fwrite(g_rgb_data, 1, sizeof(g_rgb_data), fp);
+		fclose(fp);
+		printf("Saved %s\n", filename);
+        }
 }
 
 static int read_frame(void)
@@ -617,7 +621,10 @@ static void init_device(void)
         CLEAR(fmt);
 
         fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        if (force_format) {
+        if (force_format)
+	{
+		printf("Attempting to force resolution %dx%d\n", FORCED_WIDTH, FORCED_HEIGHT);
+
                 fmt.fmt.pix.width       = FORCED_WIDTH; //640;
                 fmt.fmt.pix.height      = FORCED_HEIGHT; //480;
                 fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
@@ -627,16 +634,26 @@ static void init_device(void)
                         errno_exit("VIDIOC_S_FMT");
 
                 /* Note VIDIOC_S_FMT may change width and height. */
-		printf("width = %d\nheight = %d\n", fmt.fmt.pix.width, fmt.fmt.pix.height);
+		//printf("width = %d\nheight = %d\n", fmt.fmt.pix.width, fmt.fmt.pix.height);
+		if (fmt.fmt.pix.width != FORCED_WIDTH || fmt.fmt.pix.height != FORCED_HEIGHT)
+		{
+			printf("Could not force resolution. Use %dx%d instead? (y/n): ", fmt.fmt.pix.width, fmt.fmt.pix.height);
+			char ans;
+			scanf("%c", &ans);
+			if (ans != 'y' && ans != 'Y')
+			{
+				printf("Quitting...\n");
+				fflush(stdout);
+				exit(2);
+			}
+		}
         } else {
                 /* Preserve original settings as set by v4l2-ctl for example */
                 if (-1 == xioctl(fd, VIDIOC_G_FMT, &fmt))
                         errno_exit("VIDIOC_G_FMT");
         }
 
-	printf("Capture resolution: %dx%d\n",
-		fmt.fmt.pix.width,
-		fmt.fmt.pix.height);
+	printf("Using capture resolution: %dx%d\n", fmt.fmt.pix.width, fmt.fmt.pix.height);
 
         /* Buggy driver paranoia. */
         min = fmt.fmt.pix.width * 2;

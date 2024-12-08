@@ -1,6 +1,9 @@
+#include "yuy2_to_rgb.h"
 #include <stdio.h>
-#include <stdint.h>
-#include <stdlib.h>
+#include <pthread.h>
+
+#define STANDALONE 0
+#define N_THREADS 8
 
 #define MIN(a,b)	((a)<(b) ? (a):(b))
 #define MAX(a,b)	((a)>(b) ? (a):(b))
@@ -54,6 +57,49 @@ void yuy2_to_rgb(const uint8_t* yuy2, uint8_t* rgb, size_t n_pixels)
 	}
 }
 
+struct yuy2_to_rgb_thread_arg_t
+{
+	const uint8_t* yuy2;
+	uint8_t*       rgb;
+	size_t         n_pixels;
+};
+void* yuy2_to_rgb_thread_entry(void* arg)
+{
+	struct yuy2_to_rgb_thread_arg_t* args = (struct yuy2_to_rgb_thread_arg_t*)arg;
+
+        yuy2_to_rgb(args->yuy2, args->rgb, args->n_pixels);
+
+        return NULL;
+}
+
+void yuy2_to_rgb_threaded(const uint8_t* yuy2, uint8_t* rgb, size_t n_pixels)
+{
+	static pthread_t ids[N_THREADS];
+	static struct yuy2_to_rgb_thread_arg_t args[N_THREADS];
+
+
+	const size_t yuy2_part_size = n_pixels * 2 / N_THREADS;
+	const size_t rgb_part_size  = n_pixels * 3 / N_THREADS;
+	const size_t n_pixels_part  = n_pixels / N_THREADS;
+
+	for (size_t i = 0; i < N_THREADS; i++)
+	{
+		args[i].yuy2     = yuy2 + (i * yuy2_part_size);
+		args[i].rgb      = rgb  + (i * rgb_part_size);
+		args[i].n_pixels = n_pixels_part;
+
+		pthread_create(&ids[i], NULL, yuy2_to_rgb_thread_entry, &args[i]);
+		//printf("Started thread %lu\n", ids[i]);
+	}
+
+	for (size_t i = 0; i < N_THREADS; i++)
+	{
+		pthread_join(ids[i], NULL);
+		//printf("Joined thread %lu\n", ids[i]);
+	}	
+}
+
+#if STANDALONE
 void convert(const char* infile, const char* outfile)
 {
 	uint8_t* indata = NULL;
@@ -121,6 +167,13 @@ done:
 
 int main(int argc, char* argv[])
 {
+	if (argc < 3)
+	{
+		fprintf(stderr, "Usage: yuy2_to_rgb <IN> <OUT>\n");
+		return 1;
+	}
+
 	convert(argv[1], argv[2]);
 	return 0;
 }
+#endif // if STANDALONE
